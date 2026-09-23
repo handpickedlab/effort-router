@@ -20,11 +20,12 @@ The pieces:
 - **Hooks** (`mcp_tool` → `observe`)
   - `PostToolUseFailure` on Bash and file edits: the same command failing three times with the same error, or five times with shifting errors, injects an escalation into Claude's context. Search commands (`grep`, `rg`, `git status`, …) never count.
   - `PostToolUse` on Bash and file edits: a success resets that streak, and the hook reports the current effort level. A streak also expires after 30 minutes without a new failure.
-  - `UserPromptSubmit`: "still failing", "werkt nog steeds niet" (English and Dutch), "same error again" and similar count as a failed attempt and inject an escalation. Slash commands and task notifications don't count, and a signal expires after 30 minutes. A new prompt also forgets the last turn's effort, since gears reset.
+  - `UserPromptSubmit`: after a turn that changed code or hit failures, Jev judges whether your reply says it still doesn't work. If so, that counts as a failed attempt and injects an escalation. Slash commands and task notifications are skipped, and a signal expires after 30 minutes. A new prompt also forgets the last turn's effort, since gears reset.
   - `PostToolUse` on `Agent`: when an `effort-router:low`, `high` or `xhigh` subagent returns, Jev checks the result against its brief. A miss (below 0.35) tells Claude to retry one tier up with the same brief.
-  - `Stop`: when code files changed this turn and no test, build, type check or lint passed after the last edit, and Jev reads the final message as "done", Claude is asked once to verify or to say plainly that it's unverified. Without Jev a regex decides.
+  - `Stop`: when files changed this turn, Jev gets the files, the commands that passed after the last edit, and the final message. It judges whether the change needs a check, whether one ran, and whether the message says "done". Only when all three point that way is Claude asked, once, to verify or to say plainly that it's unverified.
   - `SessionStart` after `/clear`: forget the session's streaks and signals.
-  - Interrupted commands (Esc), search commands (`grep`, `rg`, `git status`, …) and polling (`gh pr checks`) never count as failures.
+  - Everything that interprets text is Jev's job. Without Jev, those checks are off; there is no keyword fallback. What remains without Jev is counting and comparing: failure streaks, parallel edits, the log.
+- Interrupted commands (Esc), search commands (`grep`, `rg`, `git status`, …) and polling (`gh pr checks`) never count as failures.
 
 ## Parallel sessions
 
@@ -53,7 +54,7 @@ Every route decision, Jev verdict, hook signal and overlap is appended to `~/.lo
 - Jev saying stuck (0.6 or more) counts as two failed attempts, on top of what the hooks count.
 - Without a key, offline, or after a 3 s timeout, `route` uses the heuristic alone.
 
-What leaves the machine: for `route`, the task fields Claude fills in; for the result check, the brief (up to 4,000 characters) and the result (up to 6,000); for the done check, the final message (up to 3,000). After a failed call Jev is skipped for five minutes.
+What leaves the machine: for `route`, the task fields Claude fills in; for the result check, the brief (up to 4,000 characters) and the result (up to 6,000); for the done check, the changed file paths, the commands run after the last edit, and the final message (up to 3,000); for the follow-up check, your reply (up to 2,000, pasted content removed). After a failed call Jev is skipped for five minutes.
 
 ### Turning Jev off per project
 
@@ -63,7 +64,7 @@ What leaves the machine: for `route`, the task fields Claude fills in; for the r
 { "jev": "on", "exclude": ["~/projects/client-x", "~/worktrees/client-x"] }
 ```
 
-Use `"jev": "off"` with an `"include"` list to make it opt-in instead. No file means on; a file that doesn't parse means off. Edits apply on the next call, with no reload. When Jev is off, `route` uses the heuristic and says so, the result check is skipped, and the done check falls back to its regex. The `models` tool shows the state for the current project.
+Use `"jev": "off"` with an `"include"` list to make it opt-in instead. No file means on; a file that doesn't parse means off. Edits apply on the next call, with no reload. When Jev is off, `route` uses the heuristic and says so, and the result, done and follow-up checks are skipped. The `models` tool shows the state for the current project.
 
 The key comes from `TYPESAFE_API_KEY` or `TYPESAFE_AI_API_KEY` in the server's environment, or else from `~/.config/effort-router/typesafe-api-key` (mode 600). The hooks never call Jev, so no prompt waits on the network.
 

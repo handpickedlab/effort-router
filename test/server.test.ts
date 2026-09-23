@@ -85,23 +85,12 @@ describe("server over stdio", () => {
     assert.match(output.hookSpecificOutput.additionalContext, /claude-sonnet-5 is already at its highest effort, below fable @ max/);
   });
 
-  test("a frustrated prompt injects context for UserPromptSubmit", async () => {
-    const output = JSON.parse(textOf(await client.callTool({ name: "observe", arguments: { event: "UserPromptSubmit", prompt: "werkt nog steeds niet" } })));
-    assert.equal(output.hookSpecificOutput.hookEventName, "UserPromptSubmit");
-    assert.match(output.hookSpecificOutput.additionalContext, /The user says the problem persists/);
-  });
-
-  test("a stop after unchecked edits asks for a check, offline via the fallback", async () => {
+  test("without Jev, a follow-up and an unchecked stop are left alone", async () => {
     const call = async (args: Record<string, string>) => textOf(await client.callTool({ name: "observe", arguments: args }));
     await call({ event: "UserPromptSubmit", prompt: "fix de login" });
     await call({ event: "PostToolUse", tool_name: "Edit", file_path: "/repo/src/login.ts", agent_id: "" });
-    const output = JSON.parse(await call({ event: "Stop", last_message: "Opgelost: de login werkt nu.", stop_hook_active: "false" }));
-    assert.equal(output.hookSpecificOutput.hookEventName, "Stop");
-    assert.match(output.hookSpecificOutput.additionalContext, /you changed \/repo\/src\/login.ts this turn and no test, build/);
-
-    await call({ event: "UserPromptSubmit", prompt: "en nu?" });
-    await call({ event: "PostToolUse", tool_name: "Edit", file_path: "/repo/src/login.ts", agent_id: "" });
-    assert.equal(await call({ event: "Stop", last_message: "Aangepast, maar nog niet getest.", stop_hook_active: "false" }), "{}");
+    assert.equal(await call({ event: "Stop", last_message: "Opgelost: de login werkt nu.", stop_hook_active: "false" }), "{}");
+    assert.equal(await call({ event: "UserPromptSubmit", prompt: "werkt nog steeds niet" }), "{}");
   });
 
   test("a delegated result is not second-guessed when Jev can't be asked", async () => {

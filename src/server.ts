@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { Activity, describeOverlap, repoOf } from "./activity.js";
 import { BUNDLED, type Catalog, EFFORTS, dataDir, loadLiveCatalog } from "./catalog.js";
-import { FACT_SCOPES, type FactVerdict, judge, judgeClaim, judgeKnowledge, judgeResult, rankOptions } from "./jev.js";
+import { FACT_SCOPES, type FactVerdict, judge, judgeDone, judgeFollowup, judgeKnowledge, judgeResult, rankOptions } from "./jev.js";
 import { CONFIG_FILE, projectJevAccess } from "./privacy.js";
 import { SESSION, logDecision, stateDir } from "./state.js";
 import { type HookEvent, Observer, type Signal, modelFromTranscript } from "./observe.js";
@@ -79,11 +79,10 @@ const text = (value: string): CallToolResult => ({ content: [{ type: "text", tex
 const ROUTINE: Tier[] = ["quick", "standard"];
 /** Below this, Jev thinks a delegated result missed its brief. */
 const RESULT_OK = 0.35;
-/** At or above this, Jev reads the final message as claiming the work is done. */
-const CLAIM_DONE = 0.6;
-// Fallbacks for when Jev can't be asked.
-const CLAIM = /\b(done|finished|fixed|implemented|all set|works now|klaar|opgelost|werkt nu|afgerond|gefixt|geïmplementeerd)\b/i;
-const UNVERIFIED = /\b(not (yet )?(run|verified|tested)|unverified|untested|niet (getest|geverifieerd|gedraaid)|ongetest)\b/i;
+/** Jev's done check nudges when the change needs a check, none ran, and the message says done. */
+const DONE = { needsCheck: 0.5, checked: 0.5, claimsDone: 0.6 };
+/** At or above this, Jev reads the user's reply as "it still doesn't work". */
+const PERSISTS = 0.6;
 const ROUTINE_HINT_EVERY_MS = 30 * 60 * 1000;
 
 /** File tools whose successful edits go into the activity registry. */
@@ -120,7 +119,13 @@ export function createServer(options: { liveCatalog?: boolean; activity?: Activi
 
   async function escalation(signal: Signal): Promise<string | undefined> {
     if (signal.type === "delegated") return retryOneUp(signal);
-    if (signal.type === "unverified") return verifyFirst(signal);
+    if (signal.type === "turn-end") return verifyFirst(signal);
+    if (signal.type === "followup") {
+      const verdict = await judgeFollowup(signal.prompt, signal.edited, signal.failures);
+      void logDecision({ kind: "followup", persists: verdict?.persists ?? null });
+      if (!verdict || verdict.persists < PERSISTS) return undefined;
+      return escalation({ type: "frustration", count: observer.recordFrustration() });
+    }
     if (signal.type === "solved") {
       const how = signal.attempts ? `passes after ${signal.attempts} failed attempts` : "came back with a diagnosis";
       return `[effort-router] ${signal.subject} ${how}. If the cause or the fix wasn't obvious, it's worth keeping for later sessions: call knowledge with one line per lesson (the cause and what fixed it). Skip it if it was a typo-level fix.`;
@@ -154,14 +159,14 @@ export function createServer(options: { liveCatalog?: boolean; activity?: Activi
     return `[effort-router] ${verdict.model} judges that ${signal.agent} (${ran}) did not accomplish its brief (${verdict.accomplished.toFixed(2)}). Don't build on this result. Retry one tier up: Agent(subagent_type: "${next.agent}", model: "${next.model}") with the same brief, plus what the first attempt returned and where it fell short. If you can see the result is actually fine, carry on.`;
   }
 
-  /** Edits without a passing check: nudge once, but only when the final message claims it's done. */
-  async function verifyFirst(signal: Extract<Signal, { type: "unverified" }>): Promise<string | undefined> {
-    const verdict = await judgeClaim(signal.lastMessage);
-    const claimsDone = verdict ? verdict.claimsDone >= CLAIM_DONE : CLAIM.test(signal.lastMessage) && !UNVERIFIED.test(signal.lastMessage);
-    void logDecision({ kind: "unverified", files: signal.files.length, claimsDone: verdict?.claimsDone ?? null, nudged: claimsDone });
-    if (!claimsDone) return undefined;
+  /** Jev judges the finished turn; without Jev there is no done check. */
+  async function verifyFirst(signal: Extract<Signal, { type: "turn-end" }>): Promise<string | undefined> {
+    const verdict = await judgeDone(signal.files, signal.checks, signal.lastMessage);
+    const nudge = !!verdict && verdict.needsCheck >= DONE.needsCheck && verdict.checked < DONE.checked && verdict.claimsDone >= DONE.claimsDone;
+    void logDecision({ kind: "turn-end", files: signal.files.length, checks: signal.checks.length, verdict: verdict ?? null, nudged: nudge });
+    if (!nudge) return undefined;
     const files = signal.files.length > 3 ? `${signal.files.slice(0, 3).join(", ")} and ${signal.files.length - 3} more` : signal.files.join(", ");
-    return `[effort-router] You're about to present this as done, but you changed ${files} this turn and no test, build, type check or lint passed after the last edit. Run the project's usual check now. If there is none, or it can't run here, say plainly that the change is unverified.`;
+    return `[effort-router] ${verdict.model} reads this as "done", but you changed ${files} this turn and nothing that ran after the last edit checked it. Run the project's usual check now. If there is none, or it can't run here, say plainly that the change is unverified.`;
   }
 
   const server = new McpServer({ name: "effort-router", version: VERSION }, { instructions: INSTRUCTIONS });

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { Observer, commandKey, errorSignature, isFrustrated, modelFromTranscript, present } from "../src/observe.js";
+import { Observer, commandKey, errorSignature, modelFromTranscript, ownWords, present } from "../src/observe.js";
 
 const fail = (command: string, error: string, agent_id = "") => ({ event: "PostToolUseFailure", tool_name: "Bash", command, error, agent_id });
 const pass = (command: string) => ({ event: "PostToolUse", tool_name: "Bash", command });
@@ -166,12 +166,13 @@ describe("Observer", () => {
     assert.equal(o.transcriptPath, "/main.jsonl");
   });
 
-  test("frustration signals expire after the streak window", () => {
+  test("frustration counts expire after the streak window", () => {
     let clock = 0;
     const o = new Observer(() => clock);
-    assert.deepEqual(o.observe({ event: "UserPromptSubmit", prompt: "werkt nog steeds niet" }), { type: "frustration", count: 1 });
+    assert.equal(o.recordFrustration(), 1);
+    assert.equal(o.recordFrustration(), 2);
     clock += 5 * 60 * 60 * 1000;
-    assert.deepEqual(o.observe({ event: "UserPromptSubmit", prompt: "it's still broken" }), { type: "frustration", count: 1 });
+    assert.equal(o.recordFrustration(), 1);
   });
 
   test("a new prompt forgets the last turn's effort, and /clear forgets everything", () => {
@@ -185,55 +186,55 @@ describe("Observer", () => {
     assert.equal(o.observe(fail("npm test", error)), undefined);
   });
 
-  test("counts frustration signals", () => {
+  test("a reply after a turn with edits or failures goes to Jev; other replies don't", () => {
     const o = new Observer();
-    assert.equal(o.observe({ event: "UserPromptSubmit", prompt: "voeg een knop toe" }), undefined);
-    assert.deepEqual(o.observe({ event: "UserPromptSubmit", prompt: "werkt nog steeds niet" }), { type: "frustration", count: 1 });
-    assert.deepEqual(o.observe({ event: "UserPromptSubmit", prompt: "same error again" }), { type: "frustration", count: 2 });
+    assert.equal(o.observe({ event: "UserPromptSubmit", prompt: "werkt nog steeds niet" }), undefined);
+    o.observe({ event: "PostToolUse", tool_name: "Edit", file_path: "/repo/a.ts" });
+    assert.deepEqual(o.observe({ event: "UserPromptSubmit", prompt: "werkt nog steeds niet" }), {
+      type: "followup",
+      prompt: "werkt nog steeds niet",
+      edited: ["/repo/a.ts"],
+      failures: 0,
+    });
+    o.observe(fail("npm test", error));
+    const next = o.observe({ event: "UserPromptSubmit", prompt: "en nu?" });
+    assert.ok(next?.type === "followup" && next.failures === 1);
+    o.observe({ event: "PostToolUse", tool_name: "Edit", file_path: "/repo/a.ts" });
+    assert.equal(o.observe({ event: "UserPromptSubmit", prompt: "/effort-router:stats" }), undefined);
   });
 });
 
-describe("Observer: checks after edits", () => {
+describe("Observer: end of turn", () => {
   const edit = (file_path: string, agent_id = "") => ({ event: "PostToolUse", tool_name: "Edit", file_path, agent_id });
-  const stop = (last_message = "Klaar, het werkt nu.", stop_hook_active = "false") => ({ event: "Stop", last_message, stop_hook_active });
+  const stop = (last_message = "Klaar.", stop_hook_active = "false") => ({ event: "Stop", last_message, stop_hook_active });
   const prompt = { event: "UserPromptSubmit", prompt: "doe iets" };
 
-  test("edits without a passing check flag the stop, once per turn", () => {
+  test("reports the edited files and the commands that passed after the last edit, once per turn", () => {
     const o = new Observer();
     o.observe(prompt);
-    o.observe(edit("/repo/src/a.ts"));
-    const signal = o.observe(stop());
-    assert.ok(signal?.type === "unverified" && signal.files.join() === "/repo/src/a.ts" && signal.lastMessage === "Klaar, het werkt nu.");
-    assert.equal(o.observe(stop()), undefined);
-  });
-
-  test("a passing check after the last edit clears it; an edit after the check doesn't", () => {
-    const o = new Observer();
-    o.observe(prompt);
-    o.observe(edit("/repo/src/a.ts"));
-    o.observe(pass("cd /repo && pnpm vitest run"));
-    assert.equal(o.observe(stop()), undefined);
-    o.observe(prompt);
-    o.observe(edit("/repo/src/a.ts"));
+    o.observe(pass("npm test"));
+    o.observe(edit("/repo/a.ts"));
     o.observe(pass("npx tsc --noEmit"));
-    o.observe(edit("/repo/src/b.ts"));
-    assert.equal(o.observe(stop())?.type, "unverified");
+    o.observe(edit("/repo/b.ts"));
+    o.observe(pass("pnpm vitest run"));
+    assert.deepEqual(o.observe(stop()), { type: "turn-end", files: ["/repo/a.ts", "/repo/b.ts"], checks: ["pnpm vitest run"], lastMessage: "Klaar." });
+    assert.equal(o.observe(stop()), undefined);
   });
 
-  test("docs, scratch files, subagent edits and hook-continued stops don't count", () => {
+  test("no edits, only subagent edits, or a hook-continued stop: nothing to judge", () => {
     const o = new Observer();
     o.observe(prompt);
-    o.observe(edit("/repo/README.md"));
-    o.observe(edit("/private/tmp/scratch/x.ts"));
-    o.observe(edit("/repo/src/a.ts", "agent-1"));
+    o.observe(pass("npm test"));
     assert.equal(o.observe(stop()), undefined);
-    o.observe(edit("/repo/src/a.ts"));
+    o.observe(edit("/repo/a.ts", "agent-1"));
+    assert.equal(o.observe(stop()), undefined);
+    o.observe(edit("/repo/a.ts"));
     assert.equal(o.observe(stop("done", "true")), undefined);
   });
 
   test("a new prompt starts a new turn", () => {
     const o = new Observer();
-    o.observe(edit("/repo/src/a.ts"));
+    o.observe(edit("/repo/a.ts"));
     o.observe(prompt);
     assert.equal(o.observe(stop()), undefined);
   });
@@ -277,46 +278,19 @@ describe("Observer: delegated results", () => {
   }
 });
 
-describe("isFrustrated", () => {
-  const yes = [
-    "werkt nog steeds niet",
-    "de tests falen nog steeds",
-    "zelfde fout als net",
-    "het helpt niet",
-    "we draaien rondjes",
-    "it's still failing",
-    "still getting the same error",
-    "that didn't fix it",
-    "we're going in circles",
-  ];
-  const no = [
-    "Make sure it still works when the file doesn't exist",
-    "Use the same error format as the REST API",
-    "Return the same result for both calls",
-    "Check that the migration does not change anything in prod",
-    "Make sure nothing changed in the public API",
-    "Zorg dat het nog altijd werkt als de gebruiker niet ingelogd is",
-    "Doe nu opnieuw hetzelfde voor de andere bestanden",
-    "Toon dezelfde melding als bij het inloggen",
-    "De pagina blijft hangen bij het laden",
-    "/effort-router:gear-top the tests still fail after your fix",
-    "<task-notification>\n<summary>Agent finished</summary>\nstill failing, same error\n</task-notification>",
-    "de knop werkt niet",
-    "is de build nog steeds bezig?",
-    "is the build still running?",
-    "fix the failing test",
-    'kijk hier eens naar\n<pasted_content id="p1">\nsame error: still failing\n</pasted_content id="p1">',
-  ];
-  for (const prompt of yes) test(`yes: ${prompt}`, () => assert.equal(isFrustrated(prompt), true));
-  for (const prompt of no) test(`no: ${prompt.split("\n")[0]}`, () => assert.equal(isFrustrated(prompt), false));
+describe("ownWords", () => {
+  test("keeps what the user typed, without pastes or generated prompts", () => {
+    assert.equal(ownWords('kijk hier <pasted_content id="p1">\nlog\n</pasted_content id="p1"> naar'), "kijk hier   naar");
+    assert.equal(ownWords('check dit <pasted_content id="p1">\nunclosed'), "check dit");
+    assert.equal(ownWords("/effort-router:gear-top fix it"), undefined);
+    assert.equal(ownWords("<task-notification>\ndone\n</task-notification>"), undefined);
+  });
 
-  test("an unclosed paste hides the rest, and huge prompts stay fast", () => {
-    assert.equal(isFrustrated('check dit <pasted_content id="p1">\nstill failing'), false);
-    assert.equal(isFrustrated('nog steeds kapot <pasted_content id="p1">\nlog'), true);
+  test("stays fast on huge prompts", () => {
     const huge = '<pasted_content id="x">'.repeat(20_000) + "a".repeat(1_000_000);
     const started = performance.now();
-    isFrustrated(huge);
-    assert.ok(performance.now() - started < 200, "stripping pastes must stay linear");
+    ownWords(huge);
+    assert.ok(performance.now() - started < 200);
   });
 });
 

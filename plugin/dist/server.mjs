@@ -54614,18 +54614,39 @@ async function judgeResult(brief, result) {
   const accomplished = probability(response?.answers?.accomplished?.noul);
   return response && accomplished !== void 0 ? { model: String(response.model), accomplished } : void 0;
 }
-async function judgeClaim(message) {
+async function judgeDone(files, checks, message) {
   const response = await ask(
-    { message: clip(message, 3e3) },
+    { changed_files: files.slice(0, 30), commands_that_passed_after_the_last_edit: checks, final_message: clip(message, 3e3) },
     {
-      claims_done: noul("Does this final message present the work as finished or fixed?", {
+      needs_check: noul("Do these file changes need a test, build, type check or lint before they can be called done?", {
+        true: "code or config whose behaviour could break",
+        false: "prose, notes, or scratch files"
+      }),
+      checked: noul("Did any of the commands that passed after the last edit actually check these changes (tests, build, type check, lint)?"),
+      claims_done: noul("Does the final message present the work as finished or fixed?", {
         true: "says it is done, fixed, implemented or working",
         false: "asks a question, reports a problem, or says the work is unverified or incomplete"
       })
     }
   );
+  const needsCheck = probability(response?.answers?.needs_check?.noul);
+  const checked = probability(response?.answers?.checked?.noul);
   const claimsDone = probability(response?.answers?.claims_done?.noul);
-  return response && claimsDone !== void 0 ? { model: String(response.model), claimsDone } : void 0;
+  if (!response || needsCheck === void 0 || checked === void 0 || claimsDone === void 0) return void 0;
+  return { model: String(response.model), needsCheck, checked, claimsDone };
+}
+async function judgeFollowup(prompt, edited, failures) {
+  const response = await ask(
+    { user_message: prompt, previous_turn: { changed_files: edited.slice(0, 20), failed_commands: failures } },
+    {
+      persists: noul("Does the user's message say the previous attempt did not solve the problem?", {
+        true: "it is still broken, the same error, it didn't help",
+        false: "a new request, a question, feedback on something else, or thanks"
+      })
+    }
+  );
+  const persists = probability(response?.answers?.persists?.noul);
+  return response && persists !== void 0 ? { model: String(response.model), persists } : void 0;
 }
 var FACT_SCOPES = {
   session: "only this conversation",
@@ -54732,8 +54753,6 @@ async function modelFromTranscript(file2, tailBytes = 256 * 1024) {
   return void 0;
 }
 var HARD_WON = 3;
-var VERIFY = /\b(test|tests|vitest|jest|pytest|mocha|ava|playwright|cypress|tsc|typecheck|type-check|lint|eslint|biome|build|check|clippy|rspec|phpunit|xcodebuild)\b|\bgo (test|build|vet)\b|\bmake\b/;
-var UNCHECKED = /\.(md|mdx|txt|rst)$|^\/(private\/)?tmp\//;
 function resultText(result) {
   try {
     const blocks = JSON.parse(result);
@@ -54810,34 +54829,16 @@ function commandKey(command) {
   }
   return void 0;
 }
-var SALIENT = /error|fail|exception|cannot|can't|not found|undefined|expected|denied|refused|timed out|panic/i;
-var NOISE = /^(npm (error|ERR!)|ELIFECYCLE|\[Request interrupted)/i;
+var EXIT_LINE = /^Exit code \d+$/;
 var INTERRUPTED = "[Request interrupted by user";
 var normalise = (line) => line.replace(/\x1b\[[0-9;]*m/g, "").replace(/0x[0-9a-f]+/gi, "#").replace(/\d+/g, "#").replace(/\s+/g, " ");
+var outputLines = (error62) => error62.split("\n").map((line) => line.trim()).filter((line) => line && !EXIT_LINE.test(line) && !line.startsWith(INTERRUPTED));
 function errorSignature(error62) {
-  const lines = error62.split("\n").map((line) => line.trim()).filter((line) => line && !NOISE.test(line) && !/^Exit code \d+$/.test(line));
-  const salient = lines.filter((line) => SALIENT.test(line));
-  const picked = salient.length ? salient.slice(0, 40) : lines.slice(-3);
-  return [...new Set(picked.map(normalise))].sort().join(" | ").slice(0, 2e3);
+  return [...new Set(outputLines(error62).slice(0, 200).map(normalise))].sort().join(" | ").slice(0, 4e3);
 }
 function firstErrorLine(error62) {
-  const lines = error62.split("\n").map((line) => line.trim()).filter((line) => line && !NOISE.test(line) && !/^Exit code \d+$/.test(line));
-  return (lines.find((line) => SALIENT.test(line)) ?? lines[0] ?? "").slice(0, 200);
+  return (outputLines(error62)[0] ?? "").slice(0, 200);
 }
-var FRUSTRATION = [
-  /\bnog\s+(steeds|altijd)\s+(niet|kapot|fout|fouten|errors?|stuk|rood)\b/i,
-  /\b(faalt|falen|kapot|crasht|crashen)\s+(het\s+|hij\s+|ze\s+)?nog\s+(steeds|altijd)\b/i,
-  /\bwerkt\s+(alsnog|weer|nog\s+steeds|nog\s+altijd)\s+niet\b/i,
-  /\b(de\s+)?zelfde\s+(fout|error|foutmelding)(?![-\w])(?!\s+(format|afhandeling|als\s+bij))/i,
-  /\b(weer|opnieuw)\s+(kapot|stuk)\b/i,
-  /\b(helpt|hielp)\s+niet\b/i,
-  /\brondjes\b/i,
-  /\bblijft\s+(falen|mislukken|crashen)\b/i,
-  /\bstill\s+(not\b|broken|failing|fails|failed|erroring|crashing|crashes|red\b|wrong\b|the\s+same\b|getting\b|seeing\b|doesn't|does\s+not|isn't|won't)/i,
-  /\bsame\s+(error|failure|problem|issue|bug)\s+(again|as\s+before|as\s+last\s+time)\b/i,
-  /\b(didn't|did\s+not|doesn't|does\s+not)\s+(fix|help)\s+(it|anything|the)\b/i,
-  /\bgo(ing)?\s+in\s+circles\b/i
-];
 function typedByUser(prompt) {
   return !/^\s*[/<[]/.test(prompt) && !prompt.includes("<task-notification>");
 }
@@ -54856,13 +54857,13 @@ function withoutPastes(prompt) {
     from = end + close.length;
   }
 }
-function isFrustrated(prompt) {
-  if (!typedByUser(prompt)) return false;
-  const own2 = withoutPastes(prompt).slice(0, 4e3);
-  return FRUSTRATION.some((pattern) => pattern.test(own2));
+function ownWords(prompt) {
+  if (!typedByUser(prompt)) return void 0;
+  return withoutPastes(prompt).trim().slice(0, 2e3) || void 0;
 }
 var STREAK_WINDOW_MS = 30 * 60 * 1e3;
 var FILE_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+var freshTurn = () => ({ edited: /* @__PURE__ */ new Set(), checks: [], failures: 0, nudged: false });
 var Observer = class {
   constructor(now = Date.now) {
     this.now = now;
@@ -54871,15 +54872,21 @@ var Observer = class {
   streaks = /* @__PURE__ */ new Map();
   /** When each recent frustration signal came; older than the streak window they no longer count. */
   frustrations = [];
-  /** Main-thread activity since the user's last prompt, to tell whether edits were checked. */
-  turn = { step: 0, lastEdit: -1, lastCheck: -1, edited: /* @__PURE__ */ new Set(), nudged: false };
+  /** Main-thread activity since the user's last prompt: the facts Jev judges at the end of the turn. */
+  turn = freshTurn();
   /** `/clear` keeps the server process but starts a new conversation. */
   reset() {
     this.streaks.clear();
     this.frustrations = [];
-    this.turn = { step: 0, lastEdit: -1, lastCheck: -1, edited: /* @__PURE__ */ new Set(), nudged: false };
+    this.turn = freshTurn();
     this.effort = void 0;
     this.transcriptPath = void 0;
+  }
+  /** Called when Jev judged a follow-up as "it still doesn't work"; returns how many in the window. */
+  recordFrustration() {
+    const at = this.now();
+    this.frustrations = [...this.frustrations.filter((t) => at - t <= STREAK_WINDOW_MS), at];
+    return this.frustrations.length;
   }
   /** Last effort level reported by a main-thread tool event. */
   effort;
@@ -54902,10 +54909,10 @@ var Observer = class {
     const file2 = present(event.file_path) ?? present(event.notebook_path);
     const command = present(event.command);
     if (tool && FILE_TOOLS.has(tool) && file2) {
-      this.turn.lastEdit = ++this.turn.step;
       this.turn.edited.add(file2);
-    } else if (tool === "Bash" && command && VERIFY.test(command)) {
-      this.turn.lastCheck = ++this.turn.step;
+      this.turn.checks = [];
+    } else if (tool === "Bash" && command && this.turn.edited.size && this.turn.checks.length < 20) {
+      this.turn.checks.push(command.slice(0, 300));
     }
   }
   delegated(event) {
@@ -54929,6 +54936,7 @@ var Observer = class {
         if (!subject) return void 0;
         const error62 = present(event.error) ?? "";
         if (present(event.is_interrupt) === "true" || error62.includes(INTERRUPTED)) return void 0;
+        if (!agent) this.turn.failures++;
         const signature = errorSignature(error62);
         const at = this.now();
         const stored = this.streaks.get(subject.key);
@@ -54954,21 +54962,18 @@ var Observer = class {
         return void 0;
       }
       case "Stop": {
-        const { lastEdit, lastCheck, edited, nudged } = this.turn;
-        if (nudged || present(event.stop_hook_active) === "true" || lastEdit <= lastCheck) return void 0;
-        const files = [...edited].filter((file2) => !UNCHECKED.test(file2));
-        if (!files.length) return void 0;
+        const { edited, checks, nudged } = this.turn;
+        if (nudged || present(event.stop_hook_active) === "true" || !edited.size) return void 0;
         this.turn.nudged = true;
-        return { type: "unverified", files, lastMessage: present(event.last_message) ?? "" };
+        return { type: "turn-end", files: [...edited], checks: [...checks], lastMessage: present(event.last_message) ?? "" };
       }
       case "UserPromptSubmit": {
-        this.turn = { step: 0, lastEdit: -1, lastCheck: -1, edited: /* @__PURE__ */ new Set(), nudged: false };
+        const previous = this.turn;
+        this.turn = freshTurn();
         this.effort = void 0;
-        const prompt = present(event.prompt);
-        if (!prompt || !isFrustrated(prompt)) return void 0;
-        const at = this.now();
-        this.frustrations = [...this.frustrations.filter((t) => at - t <= STREAK_WINDOW_MS), at];
-        return { type: "frustration", count: this.frustrations.length };
+        const prompt = ownWords(present(event.prompt) ?? "");
+        if (!prompt || !previous.edited.size && !previous.failures) return void 0;
+        return { type: "followup", prompt, edited: [...previous.edited], failures: previous.failures };
       }
       case "SessionStart": {
         if (present(event.source) === "clear") this.reset();
@@ -55038,9 +55043,8 @@ async function debugLog(event) {
 var text = (value) => ({ content: [{ type: "text", text: value }] });
 var ROUTINE = ["quick", "standard"];
 var RESULT_OK = 0.35;
-var CLAIM_DONE = 0.6;
-var CLAIM = /\b(done|finished|fixed|implemented|all set|works now|klaar|opgelost|werkt nu|afgerond|gefixt|geïmplementeerd)\b/i;
-var UNVERIFIED = /\b(not (yet )?(run|verified|tested)|unverified|untested|niet (getest|geverifieerd|gedraaid)|ongetest)\b/i;
+var DONE = { needsCheck: 0.5, checked: 0.5, claimsDone: 0.6 };
+var PERSISTS = 0.6;
 var ROUTINE_HINT_EVERY_MS = 30 * 60 * 1e3;
 var EDIT_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 function createServer(options = {}) {
@@ -55069,7 +55073,13 @@ function createServer(options = {}) {
   }
   async function escalation(signal) {
     if (signal.type === "delegated") return retryOneUp(signal);
-    if (signal.type === "unverified") return verifyFirst(signal);
+    if (signal.type === "turn-end") return verifyFirst(signal);
+    if (signal.type === "followup") {
+      const verdict = await judgeFollowup(signal.prompt, signal.edited, signal.failures);
+      void logDecision({ kind: "followup", persists: verdict?.persists ?? null });
+      if (!verdict || verdict.persists < PERSISTS) return void 0;
+      return escalation({ type: "frustration", count: observer.recordFrustration() });
+    }
     if (signal.type === "solved") {
       const how = signal.attempts ? `passes after ${signal.attempts} failed attempts` : "came back with a diagnosis";
       return `[effort-router] ${signal.subject} ${how}. If the cause or the fix wasn't obvious, it's worth keeping for later sessions: call knowledge with one line per lesson (the cause and what fixed it). Skip it if it was a typo-level fix.`;
@@ -55095,12 +55105,12 @@ function createServer(options = {}) {
     return `[effort-router] ${verdict.model} judges that ${signal.agent} (${ran}) did not accomplish its brief (${verdict.accomplished.toFixed(2)}). Don't build on this result. Retry one tier up: Agent(subagent_type: "${next.agent}", model: "${next.model}") with the same brief, plus what the first attempt returned and where it fell short. If you can see the result is actually fine, carry on.`;
   }
   async function verifyFirst(signal) {
-    const verdict = await judgeClaim(signal.lastMessage);
-    const claimsDone = verdict ? verdict.claimsDone >= CLAIM_DONE : CLAIM.test(signal.lastMessage) && !UNVERIFIED.test(signal.lastMessage);
-    void logDecision({ kind: "unverified", files: signal.files.length, claimsDone: verdict?.claimsDone ?? null, nudged: claimsDone });
-    if (!claimsDone) return void 0;
+    const verdict = await judgeDone(signal.files, signal.checks, signal.lastMessage);
+    const nudge = !!verdict && verdict.needsCheck >= DONE.needsCheck && verdict.checked < DONE.checked && verdict.claimsDone >= DONE.claimsDone;
+    void logDecision({ kind: "turn-end", files: signal.files.length, checks: signal.checks.length, verdict: verdict ?? null, nudged: nudge });
+    if (!nudge) return void 0;
     const files = signal.files.length > 3 ? `${signal.files.slice(0, 3).join(", ")} and ${signal.files.length - 3} more` : signal.files.join(", ");
-    return `[effort-router] You're about to present this as done, but you changed ${files} this turn and no test, build, type check or lint passed after the last edit. Run the project's usual check now. If there is none, or it can't run here, say plainly that the change is unverified.`;
+    return `[effort-router] ${verdict.model} reads this as "done", but you changed ${files} this turn and nothing that ran after the last edit checked it. Run the project's usual check now. If there is none, or it can't run here, say plainly that the change is unverified.`;
   }
   const server2 = new McpServer({ name: "effort-router", version: VERSION3 }, { instructions: INSTRUCTIONS });
   server2.registerTool(

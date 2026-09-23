@@ -92,19 +92,52 @@ export async function judgeResult(brief: string, result: string): Promise<{ mode
   return response && accomplished !== undefined ? { model: String(response.model), accomplished } : undefined;
 }
 
-/** Probability that Claude's final message presents the work as finished. */
-export async function judgeClaim(message: string): Promise<{ model: string; claimsDone: number } | undefined> {
+/** Jev's view of a finished turn that changed files. */
+export interface DoneVerdict {
+  model: string;
+  /** The changes need a test, build, type check or lint before they can be called done. */
+  needsCheck: number;
+  /** One of the commands run after the last edit checked them. */
+  checked: number;
+  /** The final message presents the work as finished. */
+  claimsDone: number;
+}
+
+export async function judgeDone(files: string[], checks: string[], message: string): Promise<DoneVerdict | undefined> {
   const response = await ask(
-    { message: clip(message, 3000) },
+    { changed_files: files.slice(0, 30), commands_that_passed_after_the_last_edit: checks, final_message: clip(message, 3000) },
     {
-      claims_done: noul("Does this final message present the work as finished or fixed?", {
+      needs_check: noul("Do these file changes need a test, build, type check or lint before they can be called done?", {
+        true: "code or config whose behaviour could break",
+        false: "prose, notes, or scratch files",
+      }),
+      checked: noul("Did any of the commands that passed after the last edit actually check these changes (tests, build, type check, lint)?"),
+      claims_done: noul("Does the final message present the work as finished or fixed?", {
         true: "says it is done, fixed, implemented or working",
         false: "asks a question, reports a problem, or says the work is unverified or incomplete",
       }),
     },
   );
+  const needsCheck = probability(response?.answers?.needs_check?.noul);
+  const checked = probability(response?.answers?.checked?.noul);
   const claimsDone = probability(response?.answers?.claims_done?.noul);
-  return response && claimsDone !== undefined ? { model: String(response.model), claimsDone } : undefined;
+  if (!response || needsCheck === undefined || checked === undefined || claimsDone === undefined) return undefined;
+  return { model: String(response.model), needsCheck, checked, claimsDone };
+}
+
+/** Probability that the user's reply says the previous attempt didn't solve the problem. */
+export async function judgeFollowup(prompt: string, edited: string[], failures: number): Promise<{ model: string; persists: number } | undefined> {
+  const response = await ask(
+    { user_message: prompt, previous_turn: { changed_files: edited.slice(0, 20), failed_commands: failures } },
+    {
+      persists: noul("Does the user's message say the previous attempt did not solve the problem?", {
+        true: "it is still broken, the same error, it didn't help",
+        false: "a new request, a question, feedback on something else, or thanks",
+      }),
+    },
+  );
+  const persists = probability(response?.answers?.persists?.noul);
+  return response && persists !== undefined ? { model: String(response.model), persists } : undefined;
 }
 
 /** Where a kept fact belongs, as Jev picks it. */

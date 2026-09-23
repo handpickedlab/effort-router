@@ -63,22 +63,20 @@ export async function modelFromTranscript(file: string, tailBytes = 256 * 1024):
 
 export type Signal =
   | { type: "stuck"; agent?: string; subject: string; same: number; total: number; level: 1 | 2; lastError: string }
+  /** The user wrote right after a turn that changed code or hit failures; Jev judges whether they say it didn't work. */
+  | { type: "followup"; prompt: string; edited: string[]; failures: number }
+  /** The user's reply was judged "it still doesn't work". */
   | { type: "frustration"; count: number }
   /** A delegated effort-router agent returned; worth checking against its brief. */
   | { type: "delegated"; agent: string; model?: string; brief: string; result: string }
-  /** The turn is ending after code edits with no successful check since the last one. */
-  | { type: "unverified"; files: string[]; lastMessage: string }
+  /** The turn is ending after edits: the files, and the commands that passed after the last edit, for Jev to judge. */
+  | { type: "turn-end"; files: string[]; checks: string[]; lastMessage: string }
   /** Something that took several failed attempts finally worked: a lesson worth keeping, maybe. */
   | { type: "solved"; subject: string; attempts: number };
 
 /** Failed attempts before a success counts as hard-won. */
 const HARD_WON = 3;
 
-/** Commands that count as checking the work: tests, builds, type checks, linters. */
-const VERIFY =
-  /\b(test|tests|vitest|jest|pytest|mocha|ava|playwright|cypress|tsc|typecheck|type-check|lint|eslint|biome|build|check|clippy|rspec|phpunit|xcodebuild)\b|\bgo (test|build|vet)\b|\bmake\b/;
-/** Edits that need no check: prose, and scratch files outside the project. */
-const UNCHECKED = /\.(md|mdx|txt|rst)$|^\/(private\/)?tmp\//;
 
 /** The text of an Agent result, which hooks deliver as a JSON array of content blocks. */
 function resultText(result: string): string {
@@ -145,10 +143,8 @@ export function commandKey(command: string): string | undefined {
   return undefined;
 }
 
-const SALIENT = /error|fail|exception|cannot|can't|not found|undefined|expected|denied|refused|timed out|panic/i;
-
-/** Runner boilerplate that is identical for every failure, and Claude Code's interrupt marker. */
-const NOISE = /^(npm (error|ERR!)|ELIFECYCLE|\[Request interrupted)/i;
+/** Claude Code's own markers in tool errors: the exit-code line, and the one it adds when the user interrupts. */
+const EXIT_LINE = /^Exit code \d+$/;
 const INTERRUPTED = "[Request interrupted by user";
 
 const normalise = (line: string) =>
@@ -158,38 +154,20 @@ const normalise = (line: string) =>
     .replace(/\d+/g, "#")
     .replace(/\s+/g, " ");
 
+const outputLines = (error: string) =>
+  error.split("\n").map((line) => line.trim()).filter((line) => line && !EXIT_LINE.test(line) && !line.startsWith(INTERRUPTED));
+
 /**
- * The set of error lines with volatile parts (colours, numbers, addresses) removed. A set, sorted, so
- * a new error next to pre-existing ones reads as progress, and only an identical repeat compares equal.
+ * The whole error output as a set of lines with volatile parts (colours, numbers, addresses) removed.
+ * A set, sorted: a new error next to pre-existing ones reads as progress, only an identical repeat is equal.
  */
 export function errorSignature(error: string): string {
-  const lines = error.split("\n").map((line) => line.trim()).filter((line) => line && !NOISE.test(line) && !/^Exit code \d+$/.test(line));
-  const salient = lines.filter((line) => SALIENT.test(line));
-  const picked = salient.length ? salient.slice(0, 40) : lines.slice(-3);
-  return [...new Set(picked.map(normalise))].sort().join(" | ").slice(0, 2000);
+  return [...new Set(outputLines(error).slice(0, 200).map(normalise))].sort().join(" | ").slice(0, 4000);
 }
 
 function firstErrorLine(error: string): string {
-  const lines = error.split("\n").map((line) => line.trim()).filter((line) => line && !NOISE.test(line) && !/^Exit code \d+$/.test(line));
-  return (lines.find((line) => SALIENT.test(line)) ?? lines[0] ?? "").slice(0, 200);
+  return (outputLines(error)[0] ?? "").slice(0, 200);
 }
-
-// Persistence tied to an earlier attempt, not a first bug report or a spec: "werkt niet" is a new task,
-// "werkt nog steeds niet" is not, and "the same error format as the API" is a requirement.
-const FRUSTRATION = [
-  /\bnog\s+(steeds|altijd)\s+(niet|kapot|fout|fouten|errors?|stuk|rood)\b/i,
-  /\b(faalt|falen|kapot|crasht|crashen)\s+(het\s+|hij\s+|ze\s+)?nog\s+(steeds|altijd)\b/i,
-  /\bwerkt\s+(alsnog|weer|nog\s+steeds|nog\s+altijd)\s+niet\b/i,
-  /\b(de\s+)?zelfde\s+(fout|error|foutmelding)(?![-\w])(?!\s+(format|afhandeling|als\s+bij))/i,
-  /\b(weer|opnieuw)\s+(kapot|stuk)\b/i,
-  /\b(helpt|hielp)\s+niet\b/i,
-  /\brondjes\b/i,
-  /\bblijft\s+(falen|mislukken|crashen)\b/i,
-  /\bstill\s+(not\b|broken|failing|fails|failed|erroring|crashing|crashes|red\b|wrong\b|the\s+same\b|getting\b|seeing\b|doesn't|does\s+not|isn't|won't)/i,
-  /\bsame\s+(error|failure|problem|issue|bug)\s+(again|as\s+before|as\s+last\s+time)\b/i,
-  /\b(didn't|did\s+not|doesn't|does\s+not)\s+(fix|help)\s+(it|anything|the)\b/i,
-  /\bgo(ing)?\s+in\s+circles\b/i,
-];
 
 /** Hook-delivered text that the user didn't type: slash commands, task notifications, system notices. */
 function typedByUser(prompt: string): boolean {
@@ -213,11 +191,10 @@ function withoutPastes(prompt: string): string {
   }
 }
 
-/** Only the user's own words count; pasted logs and code are fenced by Claude Code. */
-export function isFrustrated(prompt: string): boolean {
-  if (!typedByUser(prompt)) return false;
-  const own = withoutPastes(prompt).slice(0, 4000);
-  return FRUSTRATION.some((pattern) => pattern.test(own));
+/** The user's own words: Claude Code fences pasted logs and code, and marks prompts it generates itself. */
+export function ownWords(prompt: string): string | undefined {
+  if (!typedByUser(prompt)) return undefined;
+  return withoutPastes(prompt).trim().slice(0, 2000) || undefined;
 }
 
 interface Streak {
@@ -233,6 +210,8 @@ const STREAK_WINDOW_MS = 30 * 60 * 1000;
 
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
+const freshTurn = () => ({ edited: new Set<string>(), checks: [] as string[], failures: 0, nudged: false });
+
 /**
  * Per-session state fed by hook events. Claude Code starts one stdio server per session, so
  * this in-memory state is scoped to one session; subagents are kept apart by `agent_id`.
@@ -241,8 +220,8 @@ export class Observer {
   private readonly streaks = new Map<string, Streak>();
   /** When each recent frustration signal came; older than the streak window they no longer count. */
   private frustrations: number[] = [];
-  /** Main-thread activity since the user's last prompt, to tell whether edits were checked. */
-  private turn = { step: 0, lastEdit: -1, lastCheck: -1, edited: new Set<string>(), nudged: false };
+  /** Main-thread activity since the user's last prompt: the facts Jev judges at the end of the turn. */
+  private turn = freshTurn();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -250,9 +229,16 @@ export class Observer {
   private reset(): void {
     this.streaks.clear();
     this.frustrations = [];
-    this.turn = { step: 0, lastEdit: -1, lastCheck: -1, edited: new Set(), nudged: false };
+    this.turn = freshTurn();
     this.effort = undefined;
     this.transcriptPath = undefined;
+  }
+
+  /** Called when Jev judged a follow-up as "it still doesn't work"; returns how many in the window. */
+  recordFrustration(): number {
+    const at = this.now();
+    this.frustrations = [...this.frustrations.filter((t) => at - t <= STREAK_WINDOW_MS), at];
+    return this.frustrations.length;
   }
   /** Last effort level reported by a main-thread tool event. */
   effort: Effort | undefined;
@@ -277,10 +263,10 @@ export class Observer {
     const file = present(event.file_path) ?? present(event.notebook_path);
     const command = present(event.command);
     if (tool && FILE_TOOLS.has(tool) && file) {
-      this.turn.lastEdit = ++this.turn.step;
       this.turn.edited.add(file);
-    } else if (tool === "Bash" && command && VERIFY.test(command)) {
-      this.turn.lastCheck = ++this.turn.step;
+      this.turn.checks = [];
+    } else if (tool === "Bash" && command && this.turn.edited.size && this.turn.checks.length < 20) {
+      this.turn.checks.push(command.slice(0, 300));
     }
   }
 
@@ -309,6 +295,7 @@ export class Observer {
         const error = present(event.error) ?? "";
         // The user stopping a command is a redirect, not the agent failing.
         if (present(event.is_interrupt) === "true" || error.includes(INTERRUPTED)) return undefined;
+        if (!agent) this.turn.failures++;
         const signature = errorSignature(error);
         const at = this.now();
         const stored = this.streaks.get(subject.key);
@@ -335,22 +322,20 @@ export class Observer {
         return undefined;
       }
       case "Stop": {
-        const { lastEdit, lastCheck, edited, nudged } = this.turn;
-        if (nudged || present(event.stop_hook_active) === "true" || lastEdit <= lastCheck) return undefined;
-        const files = [...edited].filter((file) => !UNCHECKED.test(file));
-        if (!files.length) return undefined;
+        const { edited, checks, nudged } = this.turn;
+        if (nudged || present(event.stop_hook_active) === "true" || !edited.size) return undefined;
         this.turn.nudged = true;
-        return { type: "unverified", files, lastMessage: present(event.last_message) ?? "" };
+        return { type: "turn-end", files: [...edited], checks: [...checks], lastMessage: present(event.last_message) ?? "" };
       }
       case "UserPromptSubmit": {
-        this.turn = { step: 0, lastEdit: -1, lastCheck: -1, edited: new Set(), nudged: false };
+        const previous = this.turn;
+        this.turn = freshTurn();
         // Effort is per turn: a gear from the last turn is gone, and the next tool event reports the new level.
         this.effort = undefined;
-        const prompt = present(event.prompt);
-        if (!prompt || !isFrustrated(prompt)) return undefined;
-        const at = this.now();
-        this.frustrations = [...this.frustrations.filter((t) => at - t <= STREAK_WINDOW_MS), at];
-        return { type: "frustration", count: this.frustrations.length };
+        const prompt = ownWords(present(event.prompt) ?? "");
+        // Only a reply to a turn that changed code or hit failures can say "it still doesn't work".
+        if (!prompt || (!previous.edited.size && !previous.failures)) return undefined;
+        return { type: "followup", prompt, edited: [...previous.edited], failures: previous.failures };
       }
       case "SessionStart": {
         if (present(event.source) === "clear") this.reset();
