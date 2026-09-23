@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { Activity, describeOverlap, repoOf } from "./activity.js";
 import { BUNDLED, type Catalog, EFFORTS, dataDir, loadLiveCatalog } from "./catalog.js";
-import { FACT_SCOPES, type FactVerdict, judge, judgeDone, judgeFollowup, judgeKnowledge, judgeResult, rankOptions } from "./jev.js";
+import { FACT_SCOPES, type FactVerdict, judge, keySource, judgeDone, judgeFollowup, judgeKnowledge, judgeResult, rankOptions } from "./jev.js";
 import { CONFIG_FILE, projectJevAccess } from "./privacy.js";
 import { SESSION, logDecision, stateDir } from "./state.js";
 import { type HookEvent, Observer, type Signal, modelFromTranscript } from "./observe.js";
@@ -312,7 +312,7 @@ export function createServer(options: { liveCatalog?: boolean; activity?: Activi
     },
     async () => {
       const jev = projectJevAccess();
-      return text(`jev: ${jev.allowed ? "on" : "off"} for ${jev.dir} (${jev.why}; ${CONFIG_FILE})\n${renderCatalog(catalog)}`);
+      return text(`jev: ${jev.allowed ? "on" : "off"} for ${jev.dir} (${jev.why}; ${CONFIG_FILE}); ${keySource()}\n${renderCatalog(catalog)}`);
     },
   );
 

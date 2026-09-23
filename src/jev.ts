@@ -17,6 +17,18 @@ const QUESTIONS = {
 
 export const KEY_FILE = path.join(homedir(), ".config", "effort-router", "typesafe-api-key");
 
+/** Where the TypeSafe key was found, for the models tool; never the key itself. */
+export function keySource(): string {
+  if (process.env.TYPESAFE_API_KEY?.trim()) return "key from TYPESAFE_API_KEY";
+  if (process.env.TYPESAFE_AI_API_KEY?.trim()) return "key from TYPESAFE_AI_API_KEY";
+  try {
+    if (readFileSync(KEY_FILE, "utf8").trim()) return `key from ${KEY_FILE.replace(homedir(), "~")}`;
+  } catch {
+    // No key file.
+  }
+  return "no key: set one up as in the README, or Jev stays unused";
+}
+
 function apiKey(): string | undefined {
   const fromEnv = (process.env.TYPESAFE_API_KEY ?? process.env.TYPESAFE_AI_API_KEY)?.trim();
   if (fromEnv) return fromEnv;

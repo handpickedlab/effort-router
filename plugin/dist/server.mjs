@@ -54557,6 +54557,15 @@ var QUESTIONS = {
   stuck: noul("Is the agent stuck, repeating attempts that don't work?")
 };
 var KEY_FILE = path7.join(homedir3(), ".config", "effort-router", "typesafe-api-key");
+function keySource() {
+  if (process.env.TYPESAFE_API_KEY?.trim()) return "key from TYPESAFE_API_KEY";
+  if (process.env.TYPESAFE_AI_API_KEY?.trim()) return "key from TYPESAFE_AI_API_KEY";
+  try {
+    if (readFileSync2(KEY_FILE, "utf8").trim()) return `key from ${KEY_FILE.replace(homedir3(), "~")}`;
+  } catch {
+  }
+  return "no key: set one up as in the README, or Jev stays unused";
+}
 function apiKey() {
   const fromEnv = (process.env.TYPESAFE_API_KEY ?? process.env.TYPESAFE_AI_API_KEY)?.trim();
   if (fromEnv) return fromEnv;
@@ -55229,7 +55238,7 @@ function createServer(options = {}) {
     },
     async () => {
       const jev2 = projectJevAccess();
-      return text(`jev: ${jev2.allowed ? "on" : "off"} for ${jev2.dir} (${jev2.why}; ${CONFIG_FILE})
+      return text(`jev: ${jev2.allowed ? "on" : "off"} for ${jev2.dir} (${jev2.why}; ${CONFIG_FILE}); ${keySource()}
 ${renderCatalog(catalog)}`);
     }
   );

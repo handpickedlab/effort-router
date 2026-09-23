@@ -17,7 +17,11 @@ To have an AI install it, give it this:
 
 ## Optional: Jev
 
-With a [TypeSafe](https://typesafe.ai) API key, Jev judges each task; without one, a built-in heuristic does. Put the key in `~/.config/effort-router/typesafe-api-key` (mode 600).
+With a [TypeSafe](https://typesafe.ai) API key, Jev judges each task; without one, a built-in heuristic does. Paste this in a terminal. It asks for the key without showing it, and creates the config:
+
+```sh
+sh -c 'umask 077; d="$HOME/.config/effort-router"; mkdir -p "$d"; printf "TypeSafe API key: "; stty -echo 2>/dev/null; read -r k; stty echo 2>/dev/null; echo; [ -n "$k" ] || { echo "No key entered, nothing saved."; exit 1; }; printf "%s" "$k" > "$d/typesafe-api-key"; [ -f "$d/config.json" ] || printf "{ \"jev\": \"on\", \"exclude\": [] }\n" > "$d/config.json"; echo "Saved to $d. Start a new Claude Code session, or run /reload-plugins."'
+```
 
 Jev receives task descriptions. To keep a project out, list its path in `~/.config/effort-router/config.json`:
 
