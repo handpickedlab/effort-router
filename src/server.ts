@@ -2,7 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { appendFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { Activity, describeOverlap, repoOf } from "./activity.js";
 import { BUNDLED, type Catalog, EFFORTS, dataDir, loadLiveCatalog } from "./catalog.js";
@@ -25,7 +24,7 @@ Call its route tool (load it with ToolSearch if it is deferred):
 
 Pass an honest assessment, plus current_model from your system prompt and current_effort if you know it. Then follow the "do:" line. When it names an Agent, pass exactly the model it gives: the agent file only fixes the effort. Relay a /effort suggestion to the user in one line.
 
-To turn Jev off for a project, add its path to "exclude" in ${CONFIG_FILE.replace(homedir(), "~")} (the models tool shows the current state).
+To turn Jev off for a project, run \`jev off <path>\` with Bash (\`jev status\` shows the state). Never handle the TypeSafe key yourself: \`jev key\` prints the command the user runs in their own terminal.
 
 Notes that start with [effort-router] come from this plugin's hooks: a command keeps failing, or the user says it still doesn't work.`;
 

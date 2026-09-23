@@ -66,6 +66,8 @@ What leaves the machine: for `route`, the task fields Claude fills in; for the r
 
 Use `"jev": "off"` with an `"include"` list to make it opt-in instead. No file means on; a file that doesn't parse means off. Edits apply on the next call, with no reload. When Jev is off, `route` uses the heuristic and says so, and the result, done and follow-up checks are skipped. The `models` tool shows the state for the current project.
 
+The plugin's `jev` command (in `plugin/bin`, on the PATH of Claude Code's Bash tool) edits this file: `jev off [dir]`, `jev on [dir]`, `jev status`, and `jev key` to save the key from a real terminal.
+
 The key comes from `TYPESAFE_API_KEY` or `TYPESAFE_AI_API_KEY` in the server's environment, or else from `~/.config/effort-router/typesafe-api-key` (mode 600). The hooks never call Jev, so no prompt waits on the network.
 
 ## The policy

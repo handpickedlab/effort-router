@@ -14,13 +14,8 @@ Run each step and check it before moving on. Stop and tell the user if a check f
 3. **Verify.** `claude plugin list` shows `effort-router@effort-router` as enabled.
 
 4. **Ask the user** whether they have a TypeSafe API key for Jev. It's optional.
-   - Yes: don't ask for the key itself. Give the user this command to run in their own terminal. It prompts for the key without echoing it, saves it with mode 600, and creates `config.json`:
-
-     ```sh
-     sh -c 'umask 077; d="$HOME/.config/effort-router"; mkdir -p "$d"; printf "TypeSafe API key: "; stty -echo 2>/dev/null; read -r k; stty echo 2>/dev/null; echo; [ -n "$k" ] || { echo "No key entered, nothing saved."; exit 1; }; printf "%s" "$k" > "$d/typesafe-api-key"; [ -f "$d/config.json" ] || printf "{ \"jev\": \"on\", \"exclude\": [] }\n" > "$d/config.json"; echo "Saved to $d. Start a new Claude Code session, or run /reload-plugins."'
-     ```
-
-     Then ask which projects must never send data to Jev, such as client work, and add their paths to `"exclude"` in `~/.config/effort-router/config.json`.
+   - Yes: don't ask for the key itself. Run `jev key` with Bash. It refuses without a terminal and prints the command for the user to run in theirs, where the key is entered hidden. Pass that command on.
+   - Then ask which projects must never send data to Jev, such as client work, and run `jev off <path>` for each. `jev status` shows the result.
    - No: skip this step.
 
 5. **Tell the user** to start a new session or run `/reload-plugins`.

@@ -53482,7 +53482,6 @@ var EMPTY_COMPLETION_RESULT = {
 
 // src/server.ts
 import { appendFile as appendFile2, mkdir as mkdir5 } from "node:fs/promises";
-import { homedir as homedir5 } from "node:os";
 import path9 from "node:path";
 
 // src/activity.ts
@@ -54564,7 +54563,7 @@ function keySource() {
     if (readFileSync2(KEY_FILE, "utf8").trim()) return `key from ${KEY_FILE.replace(homedir3(), "~")}`;
   } catch {
   }
-  return "no key: set one up as in the README, or Jev stays unused";
+  return "no key: run `jev key` to add one, or Jev stays unused";
 }
 function apiKey() {
   const fromEnv = (process.env.TYPESAFE_API_KEY ?? process.env.TYPESAFE_AI_API_KEY)?.trim();
@@ -55007,7 +55006,7 @@ Call its route tool (load it with ToolSearch if it is deferred):
 
 Pass an honest assessment, plus current_model from your system prompt and current_effort if you know it. Then follow the "do:" line. When it names an Agent, pass exactly the model it gives: the agent file only fixes the effort. Relay a /effort suggestion to the user in one line.
 
-To turn Jev off for a project, add its path to "exclude" in ${CONFIG_FILE.replace(homedir5(), "~")} (the models tool shows the current state).
+To turn Jev off for a project, run \`jev off <path>\` with Bash (\`jev status\` shows the state). Never handle the TypeSafe key yourself: \`jev key\` prints the command the user runs in their own terminal.
 
 Notes that start with [effort-router] come from this plugin's hooks: a command keeps failing, or the user says it still doesn't work.`;
 var KEEP = 0.5;

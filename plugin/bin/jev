@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# jev: set up and control effort-router's use of Jev (TypeSafe AI).
+#
+#   jev key          save your TypeSafe API key (asks for it; nothing is shown)
+#   jev status       show whether a key is set and whether Jev is on for a directory
+#   jev off [dir]    stop sending data to Jev for a project (default: this directory)
+#   jev on [dir]     allow it again
+#
+# Everything lives in ~/.config/effort-router: the key in typesafe-api-key and the
+# per-project switch in config.json. Both are readable only by you.
+set -euo pipefail
+
+dir="$HOME/.config/effort-router"
+key_file="$dir/typesafe-api-key"
+config="$dir/config.json"
+self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+setup_dir() {
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  if [ ! -f "$config" ]; then
+    printf '{ "jev": "on", "exclude": [] }\n' > "$config"
+    chmod 600 "$config"
+  fi
+}
+
+# Edits config.json with Node, which effort-router needs anyway: $1 is "on" or "off", $2 the directory.
+set_project() {
+  setup_dir
+  node - "$config" "$1" "$2" <<'JS'
+const fs = require("fs");
+const [file, mode, target] = process.argv.slice(2);
+const dir = fs.realpathSync(target);
+const config = JSON.parse(fs.readFileSync(file, "utf8"));
+const without = (list = []) => list.filter((entry) => {
+  const full = entry.replace(/^~(?=$|\/)/, require("os").homedir());
+  try { return fs.realpathSync(full) !== dir; } catch { return full !== dir; }
+});
+config.exclude = without(config.exclude);
+config.include = without(config.include);
+if (mode === "off") config.exclude.push(dir);
+else if (config.jev === "off") config.include.push(dir);
+if (!config.include.length) delete config.include;
+fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+console.log(`Jev is ${mode} for ${dir}.`);
+JS
+}
+
+case "${1:-help}" in
+  key)
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+      echo "jev key needs a real terminal, so the key never shows up in a Claude Code transcript."
+      echo "Run this in your terminal:"
+      echo
+      echo "  $self key"
+      exit 1
+    fi
+    setup_dir
+    printf 'TypeSafe API key (input hidden): '
+    read -rs key
+    echo
+    if [ -z "$key" ]; then
+      echo "No key entered; nothing changed."
+      exit 1
+    fi
+    (umask 077 && printf '%s' "$key" > "$key_file")
+    echo "Saved. Start a new Claude Code session, or run /reload-plugins."
+    ;;
+  status)
+    if [ -n "${TYPESAFE_API_KEY:-}" ]; then echo "key:    from \$TYPESAFE_API_KEY"
+    elif [ -s "$key_file" ]; then echo "key:    $key_file"
+    else echo "key:    none (run: jev key)"
+    fi
+    if [ -f "$config" ]; then echo "config: $config"; sed 's/^/        /' "$config"
+    else echo "config: none, so Jev is on everywhere"
+    fi
+    ;;
+  off | on)
+    set_project "$1" "${2:-$PWD}"
+    ;;
+  *)
+    sed -n '2,10p' "$self" | sed 's/^# \{0,1\}//'
+    ;;
+esac

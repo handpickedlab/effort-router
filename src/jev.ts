@@ -26,7 +26,7 @@ export function keySource(): string {
   } catch {
     // No key file.
   }
-  return "no key: set one up as in the README, or Jev stays unused";
+  return "no key: run `jev key` to add one, or Jev stays unused";
 }
 
 function apiKey(): string | undefined {
