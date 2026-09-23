@@ -1,0 +1,36 @@
+{
+  "name": "effort-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code plugin: an MCP server that picks the model and reasoning effort for a task, and escalates when a session is stuck.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=esm --outfile=plugin/dist/server.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "validate": "claude plugin validate plugin",
+    "check": "npm run typecheck && npm run build && npm test && npm run validate",
+    "stats": "node plugin/scripts/stats.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@typesafe-ai/sdk": "^0.6.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/handpickedlab/effort-router.git"
+  },
+  "homepage": "https://github.com/handpickedlab/effort-router",
+  "license": "MIT"
+}

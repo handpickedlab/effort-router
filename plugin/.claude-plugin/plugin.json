@@ -1,0 +1,12 @@
+{
+  "name": "effort-router",
+  "version": "0.1.0",
+  "description": "Picks the model and reasoning effort per task: escalates when a session is stuck, stays light for routine work.",
+  "author": {
+    "name": "Handpicked Lab",
+    "url": "https://github.com/handpickedlab"
+  },
+  "homepage": "https://github.com/handpickedlab/effort-router",
+  "repository": "https://github.com/handpickedlab/effort-router",
+  "license": "MIT"
+}

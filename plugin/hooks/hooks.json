@@ -1,0 +1,126 @@
+{
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:effort-router:router",
+            "tool": "observe",
+            "input": {
+              "event": "${hook_event_name}",
+              "agent_id": "${agent_id}",
+              "tool_name": "${tool_name}",
+              "command": "${tool_input.command}",
+              "file_path": "${tool_input.file_path}",
+              "error": "${error}",
+              "effort": "${effort.level}",
+              "transcript_path": "${transcript_path}",
+              "is_interrupt": "${is_interrupt}",
+              "notebook_path": "${tool_input.notebook_path}"
+            },
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:effort-router:router",
+            "tool": "observe",
+            "input": {
+              "event": "${hook_event_name}",
+              "agent_id": "${agent_id}",
+              "tool_name": "${tool_name}",
+              "command": "${tool_input.command}",
+              "file_path": "${tool_input.file_path}",
+              "effort": "${effort.level}",
+              "transcript_path": "${transcript_path}",
+              "notebook_path": "${tool_input.notebook_path}"
+            },
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:effort-router:router",
+            "tool": "observe",
+            "input": {
+              "event": "${hook_event_name}",
+              "agent_id": "${agent_id}",
+              "tool_name": "${tool_name}",
+              "subagent_type": "${tool_input.subagent_type}",
+              "model": "${tool_input.model}",
+              "brief": "${tool_input.prompt}",
+              "status": "${tool_response.status}",
+              "result": "${tool_response.content}",
+              "transcript_path": "${transcript_path}"
+            },
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:effort-router:router",
+            "tool": "observe",
+            "input": {
+              "event": "${hook_event_name}",
+              "prompt": "${prompt}",
+              "transcript_path": "${transcript_path}"
+            },
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:effort-router:router",
+            "tool": "observe",
+            "input": {
+              "event": "${hook_event_name}",
+              "last_message": "${last_assistant_message}",
+              "stop_hook_active": "${stop_hook_active}",
+              "transcript_path": "${transcript_path}"
+            },
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:effort-router:router",
+            "tool": "observe",
+            "input": {
+              "event": "${hook_event_name}",
+              "source": "${source}"
+            },
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

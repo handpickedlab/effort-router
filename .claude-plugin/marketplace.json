@@ -1,0 +1,16 @@
+{
+  "name": "effort-router",
+  "owner": {
+    "name": "Handpicked Lab",
+    "url": "https://github.com/handpickedlab"
+  },
+  "description": "effort-router: picks the model and reasoning effort per task in Claude Code, and notices when a session is stuck.",
+  "plugins": [
+    {
+      "name": "effort-router",
+      "source": "./plugin",
+      "description": "Picks the model and reasoning effort per task: escalates when a session is stuck, stays light for routine work.",
+      "category": "productivity"
+    }
+  ]
+}
